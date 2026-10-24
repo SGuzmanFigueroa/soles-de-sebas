@@ -251,7 +251,8 @@ function cycleRange(id){ const [y,m] = id.split('-').map(Number); return {start:
 function cycleName(id){ const r = cycleRange(id); return cap(MESES[r.end.getMonth()]) + ' ' + r.end.getFullYear(); }
 function baseCycle(){ let id = cycleIdOf(today()); const ini = state.config?.inicio; if (ini && id < ini) id = ini; return id; }
 const viewCycle = () => shiftCycle(baseCycle(), state.off);
-const movsIn = (r) => { const a = ymd(r.start), b = ymd(r.end); return state.movs.filter(m => m.fecha >= a && m.fecha <= b); };
+// Lo gastado antes de que arranque el plan cuenta en el primer mes
+const movsIn = (r) => { const ini = state.config && state.config.inicio, a = ini && ymd(r.start) === ymd(cycleRange(ini).start) ? '0000-00-00' : ymd(r.start), b = ymd(r.end); return state.movs.filter(m => m.fecha >= a && m.fecha <= b); };
 
 // soloBase: el mes "normal", sin los montos propios de ese mes
 function planFor(id, soloBase){
