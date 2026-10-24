@@ -531,12 +531,12 @@ function vPlan(){
 
 function render(){
   const ae = document.activeElement;
-  if (ae && ae.tagName === 'INPUT' && $('#view').contains(ae)) return;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && $('#view').contains(ae)) return;
   document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === state.view));
   const v = $('#view');
   if (!state.db) { v.innerHTML = `<div class="card empty">Este navegador no deja guardar datos. Sal del modo privado de Safari e inténtalo otra vez.</div>`; $('#status').textContent = 'No se pueden guardar datos'; return; }
   if (!state.loadedCfg || !state.loadedMovs) return;
-  if (!state.config) { v.innerHTML = `<div class="card empty"><h2>Tu plan todavía no está cargado</h2><p>Abre en este celular el link de configuración que te mandó Claude (el que termina en <b>#plan=…</b>), o restaura un respaldo.</p><label class="btn ghost" style="display:inline-block">Restaurar respaldo<input type="file" id="restore0" data-act="restore" accept="application/json,.json" hidden></label></div>`; return; }
+  if (!state.config) { v.innerHTML = `<div class="card empty"><h2>Tu plan todavía no está cargado</h2><p>Copia el link largo que te mandó Claude (el que tiene <b>#plan=</b>) y pégalo aquí abajo.</p>${pastePlanHTML('cfg0')}<p class="sub">O si tienes un respaldo:</p><label class="btn ghost" style="display:inline-block">Restaurar respaldo<input type="file" id="restore0" data-act="restore" accept="application/json,.json" hidden></label></div>`; return; }
   const id = baseCycle(), r = cycleRange(id), t = today();
   $('#status').textContent = t < r.start ? `Arranca el ${longD(r.start)}` : `${cycleName(id)} · día ${daysBetween(r.start, t) + 1} de ${daysBetween(r.start, r.end) + 1}`;
   v.style.display = 'flex'; v.style.flexDirection = 'column'; v.style.gap = '14px';
@@ -578,6 +578,12 @@ $('#view').addEventListener('click', async e => {
   else if (act === 'repartir') {
     const id = viewCycle();
     write(() => cfgRef().update({ciclos: {[id]: {montos: {brasil: +b.dataset.b, emergencia: +b.dataset.e}}}}), 'Reparto aplicado');
+  }
+  else if (act === 'loadcfg') {
+    const ta = $('#' + b.dataset.src);
+    if (ta) ta.blur();
+    if (loadPlanCode((ta && ta.value) || state.pasteBuf)) { state.pasteBuf = ''; toast('Plan cargado'); render(); }
+    else toast('Ese link no está completo. Cópialo otra vez entero.');
   }
   else if (act === 'backup') {
     const blob = new Blob([JSON.stringify({app: 'soles-de-sebas', v: 1, fecha: new Date().toISOString(), config: state.config, movs: state.movs}, null, 2)], {type: 'application/json'});
@@ -680,6 +686,30 @@ const localDb = {
   })
 };
 
+// Acepta el link completo o solo el código que va después de "plan=", aunque venga cortado en varias líneas
+function loadPlanCode(text) {
+  try {
+    const s = String(text || '');
+    const i = s.indexOf('plan=');
+    const b64 = (i >= 0 ? s.slice(i + 5) : s).replace(/[^A-Za-z0-9_-]/g, '').replace(/-/g, '+').replace(/_/g, '/');
+    if (b64.length < 20) return false;
+    const padded = b64 + '==='.slice((b64.length + 3) % 4);
+    const bytes = Uint8Array.from(atob(padded), c => c.charCodeAt(0));
+    const cfg = JSON.parse(new TextDecoder().decode(bytes));
+    if (!cfg || !cfg.base || !cfg.base.montos) return false;
+    state.config = cfg;
+    LS.set('soles.config', state.config);
+    return true;
+  } catch(e) { return false; }
+}
+function pastePlanHTML(id) {
+  return `<div class="field" style="text-align:left"><span class="label">Pega aquí el link de configuración</span>
+    <textarea id="${id}" rows="3" placeholder="https://sguzmanfigueroa.github.io/soles-de-sebas/#plan=…" style="padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);width:100%;font:inherit;font-size:13px"></textarea>
+    <button class="btn" data-act="loadcfg" data-src="${id}">Cargar plan</button></div>`;
+}
+
+$('#view').addEventListener('input', e => { if (e.target.tagName === 'TEXTAREA') state.pasteBuf = e.target.value; });
+
 /* ---------- arranque ---------- */
 (function boot() {
   let ok = true;
@@ -687,16 +717,9 @@ const localDb = {
   state.db = ok ? localDb : null;
   state.config = LS.get('soles.config', null);
   state.movs = LS.get('soles.movs', []);
-  const m = location.hash.match(/^#plan=([A-Za-z0-9_-]+)$/);
-  if (m && ok) {
-    try {
-      const b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
-      const padded = b64 + '==='.slice((b64.length + 3) % 4);
-      const bytes = Uint8Array.from(atob(padded), c => c.charCodeAt(0));
-      state.config = JSON.parse(new TextDecoder().decode(bytes));
-      LS.set('soles.config', state.config);
-      setTimeout(() => toast('Plan cargado en este celular'), 300);
-    } catch(e) { setTimeout(() => toast('El link de configuración está incompleto.'), 300); }
+  if (ok && /plan=/.test(location.hash)) {
+    const loaded = loadPlanCode(location.hash);
+    setTimeout(() => toast(loaded ? 'Plan cargado en este celular' : 'El link de configuración está incompleto.'), 300);
     history.replaceState(null, '', location.pathname);
   }
   state.loadedCfg = state.loadedMovs = true;
