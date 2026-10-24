@@ -617,12 +617,13 @@ $('#view').addEventListener('change', e => {
     return;
   }
   const id = viewCycle(), base = state.scope === 'base';
+  // Lo que se cambia a mano queda anotado en "locales" para que una actualización de Claude no lo pise
   if (act === 'monto') {
-    const v = num(el.value);
-    write(() => cfgRef().update(base ? {base: {montos: {[el.dataset.k]: v}}} : {ciclos: {[id]: {montos: {[el.dataset.k]: v}}}}), 'Monto guardado');
+    const v = num(el.value), p = base ? `base.montos.${el.dataset.k}` : `ciclos.${id}.montos.${el.dataset.k}`;
+    write(() => cfgRef().update({...(base ? {base: {montos: {[el.dataset.k]: v}}} : {ciclos: {[id]: {montos: {[el.dataset.k]: v}}}}), locales: {[p]: v}}), 'Monto guardado');
   } else if (act === 'ingreso') {
-    const v = num(el.value);
-    write(() => cfgRef().update(base ? {base: {ingreso: v}} : {ciclos: {[id]: {ingreso: v}}}), 'Ingreso guardado');
+    const v = num(el.value), p = base ? 'base.ingreso' : `ciclos.${id}.ingreso`;
+    write(() => cfgRef().update({...(base ? {base: {ingreso: v}} : {ciclos: {[id]: {ingreso: v}}}), locales: {[p]: v}}), 'Ingreso guardado');
   } else if (act === 'extra') {
     const arr = planFor(id).extras.map(x => ({...x})); arr[+el.dataset.i].monto = num(el.value);
     write(() => cfgRef().update({ciclos: {[id]: {extras: arr}}}), 'Guardado');
@@ -704,7 +705,16 @@ function applyConfig(cfg) {
     }
     const okT = new Set((old.pendientes || []).filter(p => p.ok).map(p => p.t));
     for (const p of (cfg.pendientes || [])) if (okT.has(p.t)) p.ok = true;
+    if (old.locales && !cfg.borrarLocales) {
+      for (const [p, v] of Object.entries(old.locales)) {
+        const ks = p.split('.'); let o = cfg;
+        for (const k of ks.slice(0, -1)) { if (!o[k] || typeof o[k] !== 'object') o[k] = {}; o = o[k]; }
+        o[ks[ks.length - 1]] = v;
+      }
+      cfg.locales = {...old.locales};
+    }
   }
+  delete cfg.borrarLocales;
   state.config = cfg;
   LS.set('soles.config', state.config);
   return true;
