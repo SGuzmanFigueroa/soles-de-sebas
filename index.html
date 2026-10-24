@@ -526,6 +526,10 @@ function vPlan(){
       <div class="two"><button class="btn ghost" data-act="backup">Descargar respaldo</button><label class="btn ghost" style="text-align:center">Restaurar<input type="file" id="restore1" data-act="restore" accept="application/json,.json" hidden></label></div>
       <button class="btn ghost" data-act="copyjson">Copiar datos para Claude</button>
     </section>
+    <section class="card"><h2>Actualizar plan</h2>
+      <div class="sub">Cuando Claude te mande un link nuevo con montos corregidos, pégalo aquí. Tus gastos, pagos y la liquidación que anotaste se mantienen.</div>
+      ${pastePlanHTML('cfg1')}
+    </section>
     ${pend.length ? `<section class="card"><h2>Datos por confirmar</h2>${pend.map((x,i) => `<label class="pend ${x.ok ? 'ok' : ''}"><input type="checkbox" id="pd-${i}" data-act="pend" data-i="${i}" ${x.ok ? 'checked' : ''}><span>${esc(x.t)}</span></label>`).join('')}</section>` : ''}`;
 }
 
@@ -582,7 +586,8 @@ $('#view').addEventListener('click', async e => {
   else if (act === 'loadcfg') {
     const ta = $('#' + b.dataset.src);
     if (ta) ta.blur();
-    if (loadPlanCode((ta && ta.value) || state.pasteBuf)) { state.pasteBuf = ''; toast('Plan cargado'); render(); }
+    const had = !!state.config;
+    if (loadPlanCode((ta && ta.value) || state.pasteBuf)) { state.pasteBuf = ''; toast(had ? 'Plan actualizado' : 'Plan cargado'); render(); window.scrollTo(0, 0); }
     else toast('Ese link no está completo. Cópialo otra vez entero.');
   }
   else if (act === 'backup') {
@@ -697,6 +702,16 @@ function loadPlanCode(text) {
     const bytes = Uint8Array.from(atob(padded), c => c.charCodeAt(0));
     const cfg = JSON.parse(new TextDecoder().decode(bytes));
     if (!cfg || !cfg.base || !cfg.base.montos) return false;
+    // Si ya había un plan, conserva lo que la persona anotó: liquidación/gratificación y datos ya confirmados
+    const old = state.config;
+    if (old) {
+      for (const id in (old.ciclos || {})) {
+        const oe = old.ciclos[id].extras || [], ne = cfg.ciclos && cfg.ciclos[id] && cfg.ciclos[id].extras;
+        if (ne) for (const e of ne) { const o = oe.find(x => x.n === e.n); if (o && +o.monto && !+e.monto) e.monto = o.monto; }
+      }
+      const okT = new Set((old.pendientes || []).filter(p => p.ok).map(p => p.t));
+      for (const p of (cfg.pendientes || [])) if (okT.has(p.t)) p.ok = true;
+    }
     state.config = cfg;
     LS.set('soles.config', state.config);
     return true;
