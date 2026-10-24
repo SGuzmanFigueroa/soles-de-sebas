@@ -526,8 +526,8 @@ function vPlan(){
       <div class="two"><button class="btn ghost" data-act="backup">Descargar respaldo</button><label class="btn ghost" style="text-align:center">Restaurar<input type="file" id="restore1" data-act="restore" accept="application/json,.json" hidden></label></div>
       <button class="btn ghost" data-act="copyjson">Copiar datos para Claude</button>
     </section>
-    <section class="card"><h2>Actualizar plan</h2>
-      <div class="sub">Cuando Claude te mande un link nuevo con montos corregidos, pégalo aquí. Tus gastos, pagos y la liquidación que anotaste se mantienen.</div>
+    <section class="card"><h2>Conectar o cambiar de llave</h2>
+      <div class="sub">Tu plan se actualiza solo cada vez que abres la app. Solo usa esto si Claude te manda un link de conexión nuevo. Tus gastos, pagos y la liquidación que anotaste se mantienen.</div>
       ${pastePlanHTML('cfg1')}
     </section>
     ${pend.length ? `<section class="card"><h2>Datos por confirmar</h2>${pend.map((x,i) => `<label class="pend ${x.ok ? 'ok' : ''}"><input type="checkbox" id="pd-${i}" data-act="pend" data-i="${i}" ${x.ok ? 'checked' : ''}><span>${esc(x.t)}</span></label>`).join('')}</section>` : ''}`;
@@ -540,7 +540,7 @@ function render(){
   const v = $('#view');
   if (!state.db) { v.innerHTML = `<div class="card empty">Este navegador no deja guardar datos. Sal del modo privado de Safari e inténtalo otra vez.</div>`; $('#status').textContent = 'No se pueden guardar datos'; return; }
   if (!state.loadedCfg || !state.loadedMovs) return;
-  if (!state.config) { v.innerHTML = `<div class="card empty"><h2>Tu plan todavía no está cargado</h2><p>Copia el link largo que te mandó Claude (el que tiene <b>#plan=</b>) y pégalo aquí abajo.</p>${pastePlanHTML('cfg0')}<p class="sub">O si tienes un respaldo:</p><label class="btn ghost" style="display:inline-block">Restaurar respaldo<input type="file" id="restore0" data-act="restore" accept="application/json,.json" hidden></label></div>`; return; }
+  if (!state.config) { v.innerHTML = `<div class="card empty"><h2>Tu plan todavía no está cargado</h2><p>Copia el link que te mandó Claude y pégalo aquí abajo. Es una sola vez: después tu plan se actualiza solo.</p>${pastePlanHTML('cfg0')}<p class="sub">O si tienes un respaldo:</p><label class="btn ghost" style="display:inline-block">Restaurar respaldo<input type="file" id="restore0" data-act="restore" accept="application/json,.json" hidden></label></div>`; return; }
   const id = baseCycle(), r = cycleRange(id), t = today();
   $('#status').textContent = t < r.start ? `Arranca el ${longD(r.start)}` : `${cycleName(id)} · día ${daysBetween(r.start, t) + 1} de ${daysBetween(r.start, r.end) + 1}`;
   v.style.display = 'flex'; v.style.flexDirection = 'column'; v.style.gap = '14px';
@@ -587,7 +587,7 @@ $('#view').addEventListener('click', async e => {
     const ta = $('#' + b.dataset.src);
     if (ta) ta.blur();
     const had = !!state.config;
-    if (loadPlanCode((ta && ta.value) || state.pasteBuf)) { state.pasteBuf = ''; toast(had ? 'Plan actualizado' : 'Plan cargado'); render(); window.scrollTo(0, 0); }
+    if (await loadFromText((ta && ta.value) || state.pasteBuf)) { state.pasteBuf = ''; toast(had ? 'Plan actualizado' : 'Plan cargado'); render(); window.scrollTo(0, 0); }
     else toast('Ese link no está completo. Cópialo otra vez entero.');
   }
   else if (act === 'backup') {
@@ -691,36 +691,72 @@ const localDb = {
   })
 };
 
-// Acepta el link completo o solo el código que va después de "plan=", aunque venga cortado en varias líneas
-function loadPlanCode(text) {
-  try {
-    const s = String(text || '');
-    const i = s.indexOf('plan=');
-    const b64 = (i >= 0 ? s.slice(i + 5) : s).replace(/[^A-Za-z0-9_-]/g, '').replace(/-/g, '+').replace(/_/g, '/');
-    if (b64.length < 20) return false;
-    const padded = b64 + '==='.slice((b64.length + 3) % 4);
-    const bytes = Uint8Array.from(atob(padded), c => c.charCodeAt(0));
-    const cfg = JSON.parse(new TextDecoder().decode(bytes));
-    if (!cfg || !cfg.base || !cfg.base.montos) return false;
-    // Si ya había un plan, conserva lo que la persona anotó: liquidación/gratificación y datos ya confirmados
-    const old = state.config;
-    if (old) {
-      for (const id in (old.ciclos || {})) {
-        const oe = old.ciclos[id].extras || [], ne = cfg.ciclos && cfg.ciclos[id] && cfg.ciclos[id].extras;
-        if (ne) for (const e of ne) { const o = oe.find(x => x.n === e.n); if (o && +o.monto && !+e.monto) e.monto = o.monto; }
-      }
-      const okT = new Set((old.pendientes || []).filter(p => p.ok).map(p => p.t));
-      for (const p of (cfg.pendientes || [])) if (okT.has(p.t)) p.ok = true;
+const b64urlToBytes = s => { const b = s.replace(/-/g, '+').replace(/_/g, '/'); return Uint8Array.from(atob(b + '==='.slice((b.length + 3) % 4)), c => c.charCodeAt(0)); };
+
+// Aplica un plan nuevo conservando lo que la persona anotó: liquidación/gratificación y datos ya confirmados
+function applyConfig(cfg) {
+  if (!cfg || !cfg.base || !cfg.base.montos) return false;
+  const old = state.config;
+  if (old) {
+    for (const id in (old.ciclos || {})) {
+      const oe = old.ciclos[id].extras || [], ne = cfg.ciclos && cfg.ciclos[id] && cfg.ciclos[id].extras;
+      if (ne) for (const e of ne) { const o = oe.find(x => x.n === e.n); if (o && +o.monto && !+e.monto) e.monto = o.monto; }
     }
-    state.config = cfg;
-    LS.set('soles.config', state.config);
-    return true;
+    const okT = new Set((old.pendientes || []).filter(p => p.ok).map(p => p.t));
+    for (const p of (cfg.pendientes || [])) if (okT.has(p.t)) p.ok = true;
+  }
+  state.config = cfg;
+  LS.set('soles.config', state.config);
+  return true;
+}
+
+// El plan vive cifrado en plan.enc.json; solo este celular tiene la llave. La app lo baja sola al abrirse.
+let syncing = null;
+function syncRemote() {
+  if (syncing) return syncing;
+  syncing = (async () => {
+    const k = LS.get('soles.key', null);
+    if (!k || !window.crypto || !crypto.subtle) return false;
+    try {
+      const r = await fetch('plan.enc.json?t=' + Date.now(), {cache: 'no-store'});
+      if (!r.ok) return false;
+      const enc = await r.json();
+      if (state.config && +enc.v <= +LS.get('soles.planv', 0)) return false;
+      const key = await crypto.subtle.importKey('raw', b64urlToBytes(k), 'AES-GCM', false, ['decrypt']);
+      const plain = await crypto.subtle.decrypt({name: 'AES-GCM', iv: b64urlToBytes(enc.iv)}, key, b64urlToBytes(enc.data));
+      if (!applyConfig(JSON.parse(new TextDecoder().decode(plain)))) return false;
+      LS.set('soles.planv', +enc.v);
+      render();
+      return true;
+    } catch(e) { return false; }
+  })().finally(() => { syncing = null; });
+  return syncing;
+}
+
+// Acepta el link de conexión (#k=…) o un link de plan (#plan=…), aunque venga cortado en varias líneas
+async function loadFromText(text) {
+  const s = String(text || '');
+  const ki = s.indexOf('k=');
+  if (ki >= 0 && s.indexOf('plan=') < 0) {
+    const k = s.slice(ki + 2).replace(/[^A-Za-z0-9_-]/g, '');
+    if (k.length < 40) return false;
+    const prevK = LS.get('soles.key', null), prevV = LS.get('soles.planv', 0);
+    LS.set('soles.key', k); LS.set('soles.planv', 0);
+    const ok = await syncRemote();
+    if (!ok) { LS.set('soles.key', prevK); LS.set('soles.planv', prevV); }
+    return ok;
+  }
+  try {
+    const i = s.indexOf('plan=');
+    const b64 = (i >= 0 ? s.slice(i + 5) : s).replace(/[^A-Za-z0-9_-]/g, '');
+    if (b64.length < 20) return false;
+    return applyConfig(JSON.parse(new TextDecoder().decode(b64urlToBytes(b64))));
   } catch(e) { return false; }
 }
 function pastePlanHTML(id) {
-  return `<div class="field" style="text-align:left"><span class="label">Pega aquí el link de configuración</span>
-    <textarea id="${id}" rows="3" placeholder="https://sguzmanfigueroa.github.io/soles-de-sebas/#plan=…" style="padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);width:100%;font:inherit;font-size:13px"></textarea>
-    <button class="btn" data-act="loadcfg" data-src="${id}">Cargar plan</button></div>`;
+  return `<div class="field" style="text-align:left"><span class="label">Pega aquí el link que te mandó Claude</span>
+    <textarea id="${id}" rows="3" placeholder="https://sguzmanfigueroa.github.io/soles-de-sebas/#k=…" style="padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);width:100%;font:inherit;font-size:13px"></textarea>
+    <button class="btn" data-act="loadcfg" data-src="${id}">Conectar</button></div>`;
 }
 
 $('#view').addEventListener('input', e => { if (e.target.tagName === 'TEXTAREA') state.pasteBuf = e.target.value; });
@@ -732,12 +768,17 @@ $('#view').addEventListener('input', e => { if (e.target.tagName === 'TEXTAREA')
   state.db = ok ? localDb : null;
   state.config = LS.get('soles.config', null);
   state.movs = LS.get('soles.movs', []);
-  if (ok && /plan=/.test(location.hash)) {
-    const loaded = loadPlanCode(location.hash);
-    setTimeout(() => toast(loaded ? 'Plan cargado en este celular' : 'El link de configuración está incompleto.'), 300);
-    history.replaceState(null, '', location.pathname);
-  }
   state.loadedCfg = state.loadedMovs = true;
+  if (ok && /(^|[#&])(k|plan)=/.test(location.hash)) {
+    const h = location.hash;
+    history.replaceState(null, '', location.pathname);
+    loadFromText(h).then(r => { toast(r ? 'Listo: tu plan quedó conectado' : 'El link está incompleto. Cópialo otra vez entero.'); render(); });
+  } else if (ok) {
+    syncRemote().then(r => { if (r) toast('Claude actualizó tu plan'); });
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') syncRemote().then(r => { if (r) toast('Claude actualizó tu plan'); });
+  });
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch(e) {}
   render();
 })();
