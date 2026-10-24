@@ -253,8 +253,9 @@ function baseCycle(){ let id = cycleIdOf(today()); const ini = state.config?.ini
 const viewCycle = () => shiftCycle(baseCycle(), state.off);
 const movsIn = (r) => { const a = ymd(r.start), b = ymd(r.end); return state.movs.filter(m => m.fecha >= a && m.fecha <= b); };
 
-function planFor(id){
-  const c = state.config, ov = (c.ciclos||{})[id] || {};
+// soloBase: el mes "normal", sin los montos propios de ese mes
+function planFor(id, soloBase){
+  const c = state.config, ov = soloBase ? {} : (c.ciclos||{})[id] || {};
   const montos = {...(c.base?.montos||{}), ...(ov.montos||{})};
   for (const t of (c.traslados||[])) if (id > t.hasta && +montos[t.cat]) { montos[t.a] = (+montos[t.a]||0) + (+montos[t.cat]); montos[t.cat] = 0; }
   const ingreso = ov.ingreso ?? c.base?.ingreso ?? 0;
@@ -479,8 +480,8 @@ function vReporte(){
 }
 
 function vPlan(){
-  const id = viewCycle(), p = planFor(id), c = state.config;
   const base = state.scope === 'base';
+  const id = viewCycle(), p = planFor(id, base), c = state.config;
   const lines = GRUPOS.map(([g, n, h]) => {
     const ks = Object.keys(CATS).filter(k => CATS[k].g === g && (k in p.montos || base));
     return `<div class="grp"><div class="row2"><span class="label">${n}</span><span class="sub num">${money(p.byGroup[g])}</span></div>
@@ -498,6 +499,7 @@ function vPlan(){
   return `${cycNav(id)}
     <section class="card"><div class="row2"><h2>Reparto del sueldo</h2></div>
       <div class="seg" role="group" aria-label="Dónde guardar cambios"><button class="${base ? '' : 'on'}" data-act="scope" data-s="ciclo">Solo ${cycleName(id).split(' ')[0].toLowerCase()}</button><button class="${base ? 'on' : ''}" data-act="scope" data-s="base">Todos los meses</button></div>
+      <div class="sub">${base ? 'Así queda un mes normal con el sueldo nuevo. Los meses con montos propios, como noviembre, se revisan en la otra pestaña.' : `Montos de ${cycleName(id).split(' ')[0].toLowerCase()}, con sus pagos especiales.`}</div>
       <div class="grp"><span class="label">Ingresos</span>
         <label class="line"><span>Sueldo neto<small>${base ? 'Base para todos los meses' : 'Lo que llega a Interbank'}</small></span><input id="pl-ingreso" data-act="ingreso" inputmode="decimal" value="${(+(base ? c.base?.ingreso : p.ingreso)||0).toFixed(2)}"></label>
         ${base ? '' : extras}
