@@ -140,7 +140,13 @@ nav.tabs button.on{color:var(--accent)}
 .fab{position:fixed;z-index:21;right:max(18px,calc(env(safe-area-inset-right,0px) + 18px));bottom:calc(78px + env(safe-area-inset-bottom,0px));width:60px;height:60px;border-radius:50%;border:none;background:var(--accent);color:var(--accent-ink);font-size:32px;line-height:1;box-shadow:0 6px 18px rgba(0,0,0,.22)}
 
 .sheet-bg{position:fixed;inset:0;z-index:30;background:rgba(5,12,9,.5);display:flex;align-items:flex-end;justify-content:center}
-.sheet{width:100%;max-width:560px;background:var(--surface);border-radius:20px 20px 0 0;padding:18px max(16px,env(safe-area-inset-right,0px)) calc(18px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:14px;max-height:92vh;overflow-y:auto}
+.sheet{width:100%;max-width:560px;background:var(--surface);border-radius:20px 20px 0 0;padding:18px max(16px,env(safe-area-inset-right,0px)) calc(18px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:14px;max-height:92vh;overflow-y:auto;overscroll-behavior:contain;transition:transform .2s ease}
+.grab{flex:none;width:44px;height:5px;border-radius:99px;background:var(--line);margin:-6px auto 0}
+body.locked{position:fixed;left:0;right:0;overflow:hidden}
+.daychips{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+.daychips button{flex:none;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:8px 12px;font-weight:600;font-size:13px;text-align:center;line-height:1.2}
+.daychips button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.daychips button small{display:block;font-weight:500;font-size:11px;opacity:.8}
 .amt{display:flex;align-items:baseline;gap:6px;border-bottom:2px solid var(--accent);padding-bottom:4px}
 .amt span{font-family:var(--f-display);font-size:28px;color:var(--muted)}
 .amt input{border:none;background:none;font-family:var(--f-display);font-weight:800;font-size:44px;width:100%;min-width:0;outline:none;font-variant-numeric:tabular-nums}
@@ -192,6 +198,7 @@ nav.tabs button.on{color:var(--accent)}
 
 <div class="sheet-bg" id="sheet" hidden>
   <form class="sheet" id="form" autocomplete="off">
+    <div class="grab" aria-hidden="true"></div>
     <div class="row2"><h2>Registrar gasto</h2><button type="button" class="x" id="close">Cerrar</button></div>
     <label class="amt"><span>S/</span><input id="f-monto" inputmode="decimal" placeholder="0.00" aria-label="Monto"></label>
     <div class="field"><span class="label">¿En qué?</span><div class="chips" id="f-cats"></div></div>
@@ -207,6 +214,7 @@ nav.tabs button.on{color:var(--accent)}
 
 <div class="sheet-bg" id="cierre" hidden>
   <form class="sheet" id="cierre-form" autocomplete="off">
+    <div class="grab" aria-hidden="true"></div>
     <div class="row2"><h2>Finalizar día</h2><button type="button" class="x" id="cierre-close">Cerrar</button></div>
     <div id="cierre-body" style="display:flex;flex-direction:column;gap:14px"></div>
     <button class="btn" type="submit">Guardar cierre</button>
@@ -352,27 +360,32 @@ function saldosResumen(s){
   const deuda = CUENTAS.filter(x => x.tipo === 'tc' && s[x.k] !== undefined && s[x.k] !== '').reduce((a,x) => a + Math.max(0, L[x.k] - (+s[x.k]||0)), 0);
   return {dinero, deuda, L};
 }
+function dayLabel(d){ const off = daysBetween(today(), d); return off === 0 ? 'Hoy' : off === -1 ? 'Ayer' : cap(DOW[d.getDay()]) + ' ' + d.getDate(); }
 function todayCard(ls, inCycle){
-  const t = ymd(today());
+  const dd = addDays(today(), state.dayOff || 0), t = ymd(dd), esHoy = !state.dayOff;
   const hoy = state.movs.filter(m => m.tipo === 'gasto' && m.fecha === t).sort((a,b) => (b.creado||0) - (a.creado||0));
   const c = state.cierres.find(x => x.fecha === t);
   let analisis = '';
   if (c) {
     const s = c.saldos || {}, {deuda} = saldosResumen(s), notas = [];
-    if (inCycle && s.bcp !== undefined && s.bcp !== '') {
+    if (esHoy && inCycle && s.bcp !== undefined && s.bcp !== '') {
       const d = (+s.bcp) - ls.disponible;
       notas.push([Math.abs(d) <= 5 ? 'ok' : d < 0 ? 'warn' : '', `Para gastar hasta el ${longD(ls.we)} el plan te deja ${money(ls.disponible)} y en BCP + Yape tienes ${money(+s.bcp)}.${d < -5 ? ` Faltan ${money(-d)}: revisa si hay un gasto sin registrar o si todavía no pasaste la semanal.` : d > 5 ? ` Tienes ${money(d)} más: si te sobra el domingo, pásalo a Brasil.` : ' Cuadra.'}`]);
     }
-    if (deuda > 0) notas.push(['bad', `Tienes ${money(deuda)} usados en tarjetas de crédito.`]);
+    if (deuda > 0) notas.push(['bad', `Al cierre tenías ${money(deuda)} usados en tarjetas de crédito.`]);
     analisis = notas.map(n => `<div class="alert ${n[0]}"><span>${n[1]}</span></div>`).join('');
   }
-  return `<section class="card"><div class="row2"><span class="label">Hoy · ${longD(today())}</span>${c ? '<span class="pill ok">Día cerrado</span>' : ''}</div>
-    <div class="meta-big"><b class="num">${money(sum(hoy))}</b><span>${hoy.length ? hoy.length + (hoy.length === 1 ? ' gasto hoy' : ' gastos hoy') : 'Todavía no registras gastos hoy'}</span></div>
+  const pend = esHoy ? (() => { const ay = addDays(today(), -1), f = ymd(ay); return state.cierres.some(x => x.fecha === f) ? '' : `<button class="btn ghost" data-act="cierre" data-f="${f}">Cerrar ayer (${longD(ay)})</button>`; })() : '';
+  return `<section class="card">
+    <div class="cyc"><button data-act="day" data-k="-1" aria-label="Día anterior">‹</button>
+      <div class="mid"><b>${dayLabel(dd)}</b><span class="sub">${longD(dd)}${c ? ' · cerrado ✓' : ''}</span></div>
+      <button data-act="day" data-k="1" aria-label="Día siguiente" ${esHoy ? 'disabled' : ''}>›</button></div>
+    <div class="meta-big"><b class="num">${money(sum(hoy))}</b><span>${hoy.length ? hoy.length + (hoy.length === 1 ? ' gasto' : ' gastos') : esHoy ? 'Todavía no registras gastos hoy' : 'Sin gastos registrados'}</span></div>
     ${hoy.length ? `<div>${hoy.map(movRow).join('')}</div>` : ''}
     ${analisis}
-    <button class="btn ${c ? 'ghost' : ''}" data-act="cierre">${c ? 'Editar cierre del día' : 'Finalizar día'}</button>
-    ${(() => { const ay = addDays(today(), -1), f = ymd(ay); return state.cierres.some(x => x.fecha === f) ? '' : `<button class="btn ghost" data-act="cierre" data-f="${f}">Cerrar ayer (${longD(ay)})</button>`; })()}
-    <div class="sub">Para cerrar otro día, en Finalizar día cambia la fecha.</div></section>`;
+    <button class="btn ${c ? 'ghost' : ''}" data-act="cierre" data-f="${t}">${c ? 'Editar cierre de este día' : esHoy ? 'Finalizar día' : 'Cerrar este día'}</button>
+    ${pend}
+    ${esHoy ? '' : '<button class="btn ghost" data-act="day" data-k="0">Volver a hoy</button>'}</section>`;
 }
 function saldosCard(){
   const c = lastCierre(); if (!c) return '';
@@ -495,7 +508,69 @@ function vMetas(){
 function weekRange(){
   const t = today(); const ws = addDays(t, -((t.getDay() + 6) % 7) + state.wk * 7); return {start: ws, end: addDays(ws, 6)};
 }
-function vReporte(){
+const repSeg = () => `<div class="seg" role="group" aria-label="Tipo de reporte"><button class="${state.rmode === 'mes' ? '' : 'on'}" data-act="rmode" data-m="semana">Semana</button><button class="${state.rmode === 'mes' ? 'on' : ''}" data-act="rmode" data-m="mes">Mes</button></div>`;
+function vReporte(){ return repSeg() + (state.rmode === 'mes' ? vReporteMes() : vReporteSemana()); }
+
+// Reporte del mes de pago (del 28 al 27), con la misma mirada que el semanal
+function vReporteMes(){
+  const id = shiftCycle(baseCycle(), state.mo || 0), r = cycleRange(id), p = planFor(id), t = today();
+  const ms = movsIn(r), gastos = ms.filter(m => m.tipo === 'gasto');
+  const libres = gastos.filter(m => CATS[m.cat]?.g === 'libre'), totalLibre = sum(libres);
+  const pagos = sum(ms.filter(m => m.tipo === 'pago')), ahorro = sum(ms.filter(m => m.tipo === 'ahorro'));
+  const planPagos = p.byGroup.fijo + (+p.montos.moto_fondo || 0), planAhorro = p.byGroup.ahorro;
+  const totalDias = daysBetween(r.start, r.end) + 1;
+  const hasta = t < r.start ? r.start : t > r.end ? r.end : t, transcurridos = t < r.start ? 0 : daysBetween(r.start, hasta) + 1;
+  const ritmo = p.byGroup.libre * transcurridos / totalDias;
+  const verdict = transcurridos === 0 ? ['', 'Aún no empieza'] : totalLibre <= ritmo ? ['ok', 'Vas bien'] : totalLibre <= ritmo * 1.15 ? ['warn', 'Cuidado'] : ['bad', 'Vas pasado'];
+  const byCat = {}; for (const m of gastos) byCat[m.cat] = (byCat[m.cat]||0) + (+m.monto||0);
+  const byMed = {}; for (const m of gastos) byMed[m.medio] = (byMed[m.medio]||0) + (+m.monto||0);
+  const days = [...Array(totalDias)].map((_,i) => { const d = addDays(r.start, i); return {d, v: sum(gastos.filter(m => m.fecha === ymd(d)))}; });
+  const daily = p.byGroup.libre / totalDias, max = Math.max(daily, ...days.map(x => x.v)) * 1.15 || 1;
+  const W = 340, H = 150, top = 14, bot = 22, slot = W / totalDias, bw = Math.max(3, slot - 3), y = v => top + (H - top - bot) * (1 - v/max);
+  const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gasto por día del mes">
+    <line x1="0" x2="${W}" y1="${y(daily)}" y2="${y(daily)}" stroke="var(--muted)" stroke-dasharray="4 4" stroke-width="1"/>
+    <text x="${W}" y="${y(daily) - 4}" text-anchor="end" font-size="10" fill="var(--muted)">ideal ${money0(daily)}/día</text>
+    ${days.map((x,i) => { const X = i*slot + (slot - bw)/2, Y = y(x.v); return `<rect x="${X}" y="${Y}" width="${bw}" height="${Math.max(0, H - bot - Y)}" rx="2" fill="${x.v > daily ? 'var(--warn)' : 'var(--accent)'}"/>
+      ${i % 7 === 0 ? `<text x="${X + bw/2}" y="${H - 7}" text-anchor="middle" font-size="10" fill="var(--muted)">${x.d.getDate()} ${MESES[x.d.getMonth()].slice(0,3)}</text>` : ''}`; }).join('')}
+  </svg>`;
+  const semanas = []; for (let d = new Date(r.start); d <= r.end; d = addDays(d, 7)) { const e = addDays(d, 6) > r.end ? r.end : addDays(d, 6); semanas.push({d, e, v: sum(libres.filter(m => m.fecha >= ymd(d) && m.fecha <= ymd(e)))}); }
+  const semanal = p.byGroup.libre * 7 / totalDias;
+  const cerrados = state.cierres.filter(c => c.fecha >= ymd(r.start) && c.fecha <= ymd(r.end)).length;
+  const cred = gastos.filter(m => isCred(m.medio));
+  const top5 = [...gastos].sort((a,b) => b.monto - a.monto).slice(0, 5);
+  const catKeys = [...new Set([...QUICK.filter(k => +p.montos[k] > 0), ...Object.keys(byCat)])];
+  const txt = [
+    `Reporte ${cycleName(id)} (${short(r.start)} – ${short(r.end)})`,
+    `Entró: ${money(p.totalIngreso)}`,
+    `Gastos libres: ${money(totalLibre)} de ${money(p.byGroup.libre)} → ${verdict[1]}`,
+    `Pagos hechos: ${money(pagos)} de ${money(planPagos)}`,
+    `Ahorro: ${money(ahorro)} de ${money(planAhorro)}`,
+    ...Object.entries(byCat).sort((a,b) => b[1]-a[1]).map(([k,v]) => `· ${CATS[k]?.n || k}: ${money(v)}`),
+    `Tarjeta de crédito: ${cred.length} usos${cred.length ? ' (' + money(sum(cred)) + ')' : ''}`,
+    `Días cerrados: ${cerrados} de ${transcurridos}`
+  ].join('\n');
+  return `<div class="cyc"><button data-act="mo" data-k="-1" aria-label="Mes anterior">‹</button>
+      <div class="mid"><b>${cycleName(id)}</b><span class="sub">${short(r.start)} – ${short(r.end)}${p.nota ? ' · ' + esc(p.nota) : ''}</span></div>
+      <button data-act="mo" data-k="1" aria-label="Mes siguiente" ${(state.mo || 0) >= 0 ? 'disabled' : ''}>›</button></div>
+    <section class="card"><div class="row2"><span class="label">Gastos libres del mes</span><span class="pill ${verdict[0]}">${verdict[1]}</span></div>
+      <div class="meta-big"><b class="num">${money(totalLibre)}</b><span class="num">de ${money0(p.byGroup.libre)}</span></div>
+      ${barHTML(totalLibre, p.byGroup.libre, p.byGroup.libre && transcurridos ? `<span class="tick" style="left:${Math.min(100, ritmo / p.byGroup.libre * 100)}%"></span>` : '')}
+      <div class="sub">La rayita marca cuánto deberías llevar gastado hasta hoy (${money(ritmo)}).</div>
+      <div class="chart">${svg}</div></section>
+    <section class="card"><h2>El mes en números</h2>
+      <div class="row2"><span>Entró</span><b class="num">${money(p.totalIngreso)}</b></div>
+      <div class="row2"><span>Pagos hechos</span><b class="num">${money(pagos)} <small class="sub">de ${money0(planPagos)}</small></b></div>
+      <div class="row2"><span>Ahorro aportado</span><b class="num">${money(ahorro)} <small class="sub">de ${money0(planAhorro)}</small></b></div>
+      <div class="row2"><span>Gastos del día a día</span><b class="num">${money(sum(gastos))}</b></div>
+      <div class="row2"><span>Días cerrados</span><b class="num">${cerrados} de ${transcurridos}</b></div></section>
+    <section class="card"><h2>Por semana</h2>${semanas.map(s => `<div class="cat"><b>${short(s.d)} – ${short(s.e)}</b><span class="v num"><b>${money(s.v)}</b> / ${money0(semanal)}</span>${barHTML(s.v, semanal)}</div>`).join('')}</section>
+    <section class="card"><h2>Por categoría</h2><div class="list">${catKeys.length ? catKeys.map(k => `<div class="cat"><b>${CATS[k]?.n || esc(k)}</b><span class="v num"><b>${money(byCat[k]||0)}</b> / ${money0(p.montos[k]||0)}</span>${barHTML(byCat[k]||0, +p.montos[k]||0)}</div>`).join('') : '<div class="sub">Sin gastos registrados en este mes.</div>'}</div></section>
+    <section class="card"><h2>Con qué pagaste</h2>${Object.keys(byMed).length ? Object.entries(byMed).sort((a,b) => b[1]-a[1]).map(([k,v]) => `<div class="row2"><span>${MEDIOS.find(x => x[0] === k)?.[1] || esc(k)} ${isCred(k) ? '<span class="pill bad">fuera de la regla</span>' : ''}</span><b class="num">${money(v)}</b></div>`).join('') : '<div class="sub">—</div>'}</section>
+    ${top5.length ? `<section class="card"><h2>Gastos más grandes</h2><div>${top5.map(movRow).join('')}</div></section>` : ''}
+    <section class="card"><h2>Resumen para copiar</h2><pre id="rep-txt" style="white-space:pre-wrap;margin:0;font:inherit;font-size:14px">${esc(txt)}</pre><button class="btn ghost" data-act="copy">Copiar resumen</button></section>`;
+}
+
+function vReporteSemana(){
   const w = weekRange(), t = today();
   const cid = cycleIdOf(w.end < cycleRange(baseCycle()).start ? cycleRange(baseCycle()).start : w.start);
   const p = planFor(cid), r = cycleRange(cid);
@@ -622,6 +697,9 @@ $('#view').addEventListener('click', async e => {
   const act = b.dataset.act;
   if (act === 'cyc') { state.off += +b.dataset.k; render(); }
   else if (act === 'wk') { state.wk = Math.min(0, state.wk + +b.dataset.k); render(); }
+  else if (act === 'day') { const k = +b.dataset.k; state.dayOff = k === 0 ? 0 : Math.min(0, (state.dayOff || 0) + k); render(); }
+  else if (act === 'rmode') { state.rmode = b.dataset.m; render(); }
+  else if (act === 'mo') { state.mo = Math.min(0, (state.mo || 0) + +b.dataset.k); render(); }
   else if (act === 'go') { state.view = b.dataset.v; render(); window.scrollTo(0,0); }
   else if (act === 'scope') { state.scope = b.dataset.s; render(); }
   else if (act === 'del') {
@@ -699,6 +777,31 @@ $('#view').addEventListener('change', e => {
 });
 $('#view').addEventListener('focusout', () => setTimeout(() => { if (!$('#view').contains(document.activeElement) || document.activeElement.tagName !== 'INPUT') render(); }, 50));
 
+/* ---------- hojas que suben desde abajo ---------- */
+// Mientras una hoja está abierta, la pantalla de atrás no se mueve (iPhone ignora overflow:hidden, por eso position:fixed)
+let lockY = 0;
+function lockScroll(on){
+  const b = document.body, anyOpen = !$('#sheet').hidden || !$('#cierre').hidden;
+  if (on && !b.classList.contains('locked')) { lockY = window.scrollY; b.style.top = -lockY + 'px'; b.classList.add('locked'); }
+  else if (!on && !anyOpen && b.classList.contains('locked')) { b.classList.remove('locked'); b.style.top = ''; window.scrollTo(0, lockY); }
+}
+function showSheet(id){ const bg = $('#' + id), sh = bg.querySelector('.sheet'); bg.hidden = false; sh.style.transform = ''; sh.scrollTop = 0; lockScroll(true); }
+function hideSheet(id){ $('#' + id).hidden = true; lockScroll(false); }
+for (const id of ['sheet', 'cierre']) {
+  const bg = $('#' + id), sh = bg.querySelector('.sheet');
+  let y0 = null, dy = 0;
+  // Deslizar hacia abajo cierra la hoja, solo si está arriba del todo
+  sh.addEventListener('touchstart', e => { y0 = sh.scrollTop <= 0 ? e.touches[0].clientY : null; dy = 0; sh.style.transition = 'none'; }, {passive: true});
+  sh.addEventListener('touchmove', e => {
+    if (y0 === null) return;
+    dy = e.touches[0].clientY - y0;
+    if (dy > 0) { sh.style.transform = `translateY(${dy}px)`; if (e.cancelable) e.preventDefault(); }
+    else { sh.style.transform = ''; y0 = null; }
+  }, {passive: false});
+  sh.addEventListener('touchend', () => { sh.style.transition = ''; if (y0 !== null && dy > 90) hideSheet(id); else sh.style.transform = ''; y0 = null; dy = 0; });
+  bg.addEventListener('touchmove', e => { if (e.target === bg && e.cancelable) e.preventDefault(); }, {passive: false});
+}
+
 /* ---------- registrar gasto ---------- */
 function drawChips(){
   $('#f-cats').innerHTML = QUICK.map(k => `<button type="button" data-c="${k}" class="${state.sel.cat === k ? 'on' : ''}">${CATS[k].n}</button>`).join('');
@@ -708,11 +811,11 @@ function drawChips(){
 function openSheet(){
   if (!state.db || !state.config) { toast('Tus datos aún no cargan.'); return; }
   $('#f-monto').value = ''; $('#f-nota').value = ''; $('#f-fecha').value = ymd(today());
-  drawChips(); $('#sheet').hidden = false; setTimeout(() => $('#f-monto').focus(), 60);
+  drawChips(); showSheet('sheet'); setTimeout(() => $('#f-monto').focus(), 60);
 }
 $('#fab').addEventListener('click', openSheet);
-$('#close').addEventListener('click', () => $('#sheet').hidden = true);
-$('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') $('#sheet').hidden = true; });
+$('#close').addEventListener('click', () => hideSheet('sheet'));
+$('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') hideSheet('sheet'); });
 $('#f-cats').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.sel.cat = b.dataset.c; drawChips(); } });
 $('#f-medios').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.sel.medio = b.dataset.m; drawChips(); } });
 $('#form').addEventListener('submit', e => {
@@ -720,10 +823,10 @@ $('#form').addEventListener('submit', e => {
   const monto = num($('#f-monto').value);
   if (monto <= 0) { toast('Escribe cuánto gastaste.'); $('#f-monto').focus(); return; }
   const doc = {tipo: 'gasto', cat: state.sel.cat, monto, medio: state.sel.medio, fecha: $('#f-fecha').value || ymd(today()), nota: $('#f-nota').value.trim().slice(0, 80), creado: Date.now()};
-  $('#sheet').hidden = true;
+  hideSheet('sheet');
   write(() => state.db.collection('movs').add(doc), `${money(monto)} en ${CATS[doc.cat].n} guardado`);
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('#sheet').hidden = true; $('#cierre').hidden = true; } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideSheet('sheet'); hideSheet('cierre'); } });
 
 /* ---------- finalizar día ---------- */
 function openCierre(fecha){
@@ -737,7 +840,9 @@ function openCierre(fecha){
   const medioSel = m => `<select id="cm-${esc(m.id)}" data-id="${esc(m.id)}" aria-label="De dónde salió" style="padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);max-width:160px">
       ${(MEDIOS_NUEVOS.some(x => x[0] === m.medio) ? MEDIOS_NUEVOS : MEDIOS).map(([k,n]) => `<option value="${k}" ${m.medio === k ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
   $('#cierre-body').innerHTML = `
-    <label class="field"><span class="label">Día que cierras</span><input type="date" id="ci-fecha" value="${t}" max="${hoyStr}"></label>
+    <div class="field"><span class="label">¿Qué día cierras?</span>
+      <div class="daychips">${[...Array(7)].map((_, i) => { const d = addDays(today(), -i), f = ymd(d), ok = state.cierres.some(x => x.fecha === f); return `<button type="button" data-cf="${f}" class="${f === t ? 'on' : ''}">${dayLabel(d)}<small>${ok ? 'cerrado ✓' : d.getDate() + ' ' + MESES[d.getMonth()].slice(0,3)}</small></button>`; }).join('')}</div>
+      <label class="line"><span>Otra fecha</span><input type="date" id="ci-fecha" value="${t}" max="${hoyStr}" style="width:auto"></label></div>
     <div class="meta-big"><b class="num">${money(sum(hoy))}</b><span>${hoy.length ? 'gastaste ' + dia + ' en ' + hoy.length + (hoy.length === 1 ? ' gasto' : ' gastos') : 'no registraste gastos ' + dia}</span></div>
     ${hoy.length ? `<div class="field"><span class="label">¿De dónde salió cada gasto?</span>
       ${hoy.map(m => `<div class="row2" style="border-top:1px solid var(--line);padding-top:8px"><span>${esc(CATS[m.cat]?.n || m.cat)}<br><small class="sub num">${money(m.monto)}${m.nota ? ' · ' + esc(m.nota) : ''}</small></span>${medioSel(m)}</div>`).join('')}</div>` : ''}
@@ -748,12 +853,13 @@ function openCierre(fecha){
         <input id="ci-${x.k}" inputmode="decimal" placeholder="0.00" value="${s[x.k] !== undefined && s[x.k] !== '' ? (+s[x.k]).toFixed(2) : ''}"></label>`).join('')}
       ${prev && prev.fecha !== t ? `<div class="sub">Te dejé los saldos del cierre del ${short(parseD(prev.fecha))}. Cámbialos si se movieron.</div>` : ''}
     </div>`;
-  $('#cierre').hidden = false;
+  showSheet('cierre');
 }
-$('#cierre-close').addEventListener('click', () => $('#cierre').hidden = true);
+$('#cierre-close').addEventListener('click', () => hideSheet('cierre'));
 $('#cierre').addEventListener('click', e => {
-  if (e.target.id === 'cierre') $('#cierre').hidden = true;
-  if (e.target.id === 'cierre-add') { $('#cierre').hidden = true; openSheet(); if (state.cierreFecha) $('#f-fecha').value = state.cierreFecha; }
+  if (e.target.id === 'cierre') hideSheet('cierre');
+  const cf = e.target.closest('[data-cf]'); if (cf) openCierre(cf.dataset.cf);
+  if (e.target.id === 'cierre-add') { hideSheet('cierre'); openSheet(); if (state.cierreFecha) $('#f-fecha').value = state.cierreFecha; }
 });
 $('#cierre').addEventListener('change', e => { if (e.target.id === 'ci-fecha' && e.target.value) openCierre(e.target.value); });
 $('#cierre-form').addEventListener('submit', async e => {
@@ -770,7 +876,7 @@ $('#cierre-form').addEventListener('submit', async e => {
   const cierre = {fecha: t, saldos, gastoHoy: sum(hoy), creado: Date.now()};
   state.cierres = state.cierres.filter(x => x.fecha !== t).concat(cierre).sort((a,b) => a.fecha < b.fecha ? -1 : 1).slice(-400);
   if (!LS.set('soles.cierres', state.cierres)) { toast('No se pudo guardar el cierre.'); return; }
-  $('#cierre').hidden = true;
+  hideSheet('cierre');
   state.view = 'hoy'; render(); window.scrollTo(0, 0);
   toast(t === ymd(today()) ? 'Día cerrado. Buen trabajo 💪' : 'Cerraste el ' + longD(parseD(t)));
 });
@@ -886,6 +992,20 @@ function pastePlanHTML(id) {
 
 $('#view').addEventListener('input', e => { if (e.target.tagName === 'TEXTAREA') state.pasteBuf = e.target.value; });
 
+// Si hay una versión nueva publicada, recarga la app (el iPhone guarda la página vieja en caché)
+const APP_VERSION = '1793049350110';
+async function checkUpdate(){
+  try {
+    const r = await fetch('version.json?t=' + Date.now(), {cache: 'no-store'}); if (!r.ok) return;
+    const v = String((await r.json()).v);
+    if (v === APP_VERSION) return;
+    let tried = null; try { tried = sessionStorage.getItem('soles.upd'); } catch(e) {}
+    if (tried === v) return;
+    try { sessionStorage.setItem('soles.upd', v); } catch(e) {}
+    location.replace(location.pathname + '?v=' + v);
+  } catch(e) {}
+}
+
 /* ---------- arranque ---------- */
 (function boot() {
   let ok = true;
@@ -900,10 +1020,10 @@ $('#view').addEventListener('input', e => { if (e.target.tagName === 'TEXTAREA')
     history.replaceState(null, '', location.pathname);
     loadFromText(h).then(r => { toast(r ? 'Listo: tu plan quedó conectado' : 'El link está incompleto. Cópialo otra vez entero.'); render(); });
   } else if (ok) {
-    syncRemote().then(r => { if (r) toast('Claude actualizó tu plan'); });
+    checkUpdate(); syncRemote().then(r => { if (r) toast('Claude actualizó tu plan'); });
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') syncRemote().then(r => { if (r) toast('Claude actualizó tu plan'); });
+    if (document.visibilityState === 'visible') { checkUpdate(); syncRemote().then(r => { if (r) toast('Claude actualizó tu plan'); }); }
   });
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch(e) {}
   render();
