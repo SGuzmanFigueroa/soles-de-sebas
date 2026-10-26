@@ -229,7 +229,7 @@ const GRUPOS = [
   ['libre','Gastos libres','Llegan a BCP/Yape cada lunes']
 ];
 const QUICK = ['comida','novia','gasolina','ropa','regalos','varios'];
-const MEDIOS = [['yape','Yape (BCP)'],['debito','Débito BCP'],['debito_ib','Débito Interbank'],['efectivo','Efectivo'],['plin','Plin'],['tc_bbva','Tarjeta BBVA'],['tc_bcp','Tarjeta BCP'],['credito','Crédito']];
+const MEDIOS = [['yape','Yape (BCP)'],['debito','Débito BCP'],['debito_ib','Débito Interbank'],['efectivo','Efectivo'],['plin','Plin'],['adelanto','Adelanto de sueldo'],['tc_bbva','Tarjeta BBVA'],['tc_bcp','Tarjeta BCP'],['credito','Crédito']];
 const MEDIOS_NUEVOS = MEDIOS.filter(x => x[0] !== 'credito');
 const isCred = k => k === 'credito' || String(k || '').startsWith('tc_');
 // Dónde está la plata: se pregunta al finalizar el día
@@ -370,7 +370,9 @@ function todayCard(ls, inCycle){
     <div class="meta-big"><b class="num">${money(sum(hoy))}</b><span>${hoy.length ? hoy.length + (hoy.length === 1 ? ' gasto hoy' : ' gastos hoy') : 'Todavía no registras gastos hoy'}</span></div>
     ${hoy.length ? `<div>${hoy.map(movRow).join('')}</div>` : ''}
     ${analisis}
-    <button class="btn ${c ? 'ghost' : ''}" data-act="cierre">${c ? 'Editar cierre del día' : 'Finalizar día'}</button></section>`;
+    <button class="btn ${c ? 'ghost' : ''}" data-act="cierre">${c ? 'Editar cierre del día' : 'Finalizar día'}</button>
+    ${(() => { const ay = addDays(today(), -1), f = ymd(ay); return state.cierres.some(x => x.fecha === f) ? '' : `<button class="btn ghost" data-act="cierre" data-f="${f}">Cerrar ayer (${longD(ay)})</button>`; })()}
+    <div class="sub">Para cerrar otro día, en Finalizar día cambia la fecha.</div></section>`;
 }
 function saldosCard(){
   const c = lastCierre(); if (!c) return '';
@@ -650,7 +652,7 @@ $('#view').addEventListener('click', async e => {
     if (await loadFromText((ta && ta.value) || state.pasteBuf)) { state.pasteBuf = ''; toast(had ? 'Plan actualizado' : 'Plan cargado'); render(); window.scrollTo(0, 0); }
     else toast('Ese link no está completo. Cópialo otra vez entero.');
   }
-  else if (act === 'cierre') openCierre();
+  else if (act === 'cierre') openCierre(b.dataset.f);
   else if (act === 'backup') {
     const blob = new Blob([JSON.stringify({app: 'soles-de-sebas', v: 1, fecha: new Date().toISOString(), config: state.config, movs: state.movs, cierres: state.cierres}, null, 2)], {type: 'application/json'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'soles-respaldo-' + ymd(today()) + '.json';
@@ -724,35 +726,39 @@ $('#form').addEventListener('submit', e => {
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { $('#sheet').hidden = true; $('#cierre').hidden = true; } });
 
 /* ---------- finalizar día ---------- */
-function openCierre(){
+function openCierre(fecha){
   if (!state.db || !state.config) { toast('Tus datos aún no cargan.'); return; }
-  const t = ymd(today());
+  const hoyStr = ymd(today()), t = fecha && fecha <= hoyStr ? fecha : hoyStr, esHoy = t === hoyStr;
+  state.cierreFecha = t;
+  const dia = esHoy ? 'hoy' : 'el ' + longD(parseD(t));
   const hoy = state.movs.filter(m => m.tipo === 'gasto' && m.fecha === t).sort((a,b) => (a.creado||0) - (b.creado||0));
-  const prev = state.cierres.find(x => x.fecha === t) || lastCierre();
+  const prev = state.cierres.find(x => x.fecha === t) || [...state.cierres].filter(x => x.fecha < t).sort((a,b) => a.fecha < b.fecha ? 1 : -1)[0] || lastCierre();
   const s = (prev && prev.saldos) || {}, L = lineas();
-  const medioSel = m => `<select id="cm-${esc(m.id)}" data-id="${esc(m.id)}" aria-label="De dónde salió" style="padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);max-width:150px">
+  const medioSel = m => `<select id="cm-${esc(m.id)}" data-id="${esc(m.id)}" aria-label="De dónde salió" style="padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);max-width:160px">
       ${(MEDIOS_NUEVOS.some(x => x[0] === m.medio) ? MEDIOS_NUEVOS : MEDIOS).map(([k,n]) => `<option value="${k}" ${m.medio === k ? 'selected' : ''}>${n}</option>`).join('')}</select>`;
   $('#cierre-body').innerHTML = `
-    <div class="meta-big"><b class="num">${money(sum(hoy))}</b><span>${hoy.length ? 'gastaste hoy en ' + hoy.length + (hoy.length === 1 ? ' gasto' : ' gastos') : 'no registraste gastos hoy'}</span></div>
+    <label class="field"><span class="label">Día que cierras</span><input type="date" id="ci-fecha" value="${t}" max="${hoyStr}"></label>
+    <div class="meta-big"><b class="num">${money(sum(hoy))}</b><span>${hoy.length ? 'gastaste ' + dia + ' en ' + hoy.length + (hoy.length === 1 ? ' gasto' : ' gastos') : 'no registraste gastos ' + dia}</span></div>
     ${hoy.length ? `<div class="field"><span class="label">¿De dónde salió cada gasto?</span>
       ${hoy.map(m => `<div class="row2" style="border-top:1px solid var(--line);padding-top:8px"><span>${esc(CATS[m.cat]?.n || m.cat)}<br><small class="sub num">${money(m.monto)}${m.nota ? ' · ' + esc(m.nota) : ''}</small></span>${medioSel(m)}</div>`).join('')}</div>` : ''}
     <button type="button" class="btn ghost" id="cierre-add">Me olvidé de anotar un gasto</button>
-    <div class="field"><span class="label">¿Cuánto te queda ahora?</span>
+    <div class="field"><span class="label">¿Cuánto te quedó ${esHoy ? 'ahora' : 'ese día'}?</span>
       <div class="sub">Mira cada app y escribe el saldo. En las tarjetas, escribe el <b>disponible</b>.</div>
       ${CUENTAS.map(x => `<label class="line"><span>${x.n}<small>${x.tipo === 'tc' ? 'Disponible de una línea de ' + money0(L[x.k]) : x.h}</small></span>
         <input id="ci-${x.k}" inputmode="decimal" placeholder="0.00" value="${s[x.k] !== undefined && s[x.k] !== '' ? (+s[x.k]).toFixed(2) : ''}"></label>`).join('')}
-      ${prev && prev.fecha !== t ? `<div class="sub">Te dejé los saldos del cierre del ${short(parseD(prev.fecha))}. Cámbialos por los de hoy.</div>` : ''}
+      ${prev && prev.fecha !== t ? `<div class="sub">Te dejé los saldos del cierre del ${short(parseD(prev.fecha))}. Cámbialos si se movieron.</div>` : ''}
     </div>`;
   $('#cierre').hidden = false;
 }
 $('#cierre-close').addEventListener('click', () => $('#cierre').hidden = true);
 $('#cierre').addEventListener('click', e => {
   if (e.target.id === 'cierre') $('#cierre').hidden = true;
-  if (e.target.id === 'cierre-add') { $('#cierre').hidden = true; openSheet(); }
+  if (e.target.id === 'cierre-add') { $('#cierre').hidden = true; openSheet(); if (state.cierreFecha) $('#f-fecha').value = state.cierreFecha; }
 });
+$('#cierre').addEventListener('change', e => { if (e.target.id === 'ci-fecha' && e.target.value) openCierre(e.target.value); });
 $('#cierre-form').addEventListener('submit', async e => {
   e.preventDefault();
-  const t = ymd(today());
+  const t = state.cierreFecha || ymd(today());
   // Corrige de dónde salió cada gasto
   for (const sel of document.querySelectorAll('#cierre-body select[data-id]')) {
     const m = state.movs.find(x => x.id === sel.dataset.id);
@@ -766,7 +772,7 @@ $('#cierre-form').addEventListener('submit', async e => {
   if (!LS.set('soles.cierres', state.cierres)) { toast('No se pudo guardar el cierre.'); return; }
   $('#cierre').hidden = true;
   state.view = 'hoy'; render(); window.scrollTo(0, 0);
-  toast('Día cerrado. Buen trabajo 💪');
+  toast(t === ymd(today()) ? 'Día cerrado. Buen trabajo 💪' : 'Cerraste el ' + longD(parseD(t)));
 });
 
 /* ---------- guardado en este celular ---------- */
