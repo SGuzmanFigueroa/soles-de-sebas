@@ -199,9 +199,10 @@ body.locked{position:fixed;left:0;right:0;overflow:hidden}
 <div class="sheet-bg" id="sheet" hidden>
   <form class="sheet" id="form" autocomplete="off">
     <div class="grab" aria-hidden="true"></div>
-    <div class="row2"><h2>Registrar gasto</h2><button type="button" class="x" id="close">Cerrar</button></div>
+    <div class="seg" id="f-tipo" role="group" aria-label="Qué registras"><button type="button" data-t="gasto" class="on">Gasto</button><button type="button" data-t="ingreso">Ingreso</button></div>
+    <div class="row2"><h2 id="f-title">Registrar gasto</h2><button type="button" class="x" id="close">Cerrar</button></div>
     <label class="amt"><span>S/</span><input id="f-monto" inputmode="decimal" placeholder="0.00" aria-label="Monto"></label>
-    <div class="field"><span class="label">¿En qué?</span><div class="chips" id="f-cats"></div></div>
+    <div class="field"><span class="label" id="f-cats-l">¿En qué?</span><div class="chips" id="f-cats"></div></div>
     <div class="field"><span class="label">¿Con qué pagaste?</span><div class="chips" id="f-medios"></div></div>
     <div class="two">
       <label class="field"><span class="label">Fecha</span><input type="date" id="f-fecha"></label>
@@ -227,7 +228,10 @@ const CATS = {
   caja:{n:'Caja Arequipa',g:'fijo'}, adelanto:{n:'Adelanto de sueldo',g:'fijo',h:'S/ 500 + S/ 20 de comisión'}, suscripciones:{n:'Suscripciones',g:'fijo',h:'Spotify, Claude, Workspace (pago TC BBVA)'}, casa:{n:'Aporte casa',g:'fijo'}, soat:{n:'SOAT moto',g:'fijo'},
   gasolina:{n:'Gasolina',g:'moto'}, moto_fondo:{n:'Fondo moto',g:'moto',h:'Mantenimiento y SOAT del próximo año'},
   emergencia:{n:'Emergencia',g:'ahorro'}, brasil:{n:'Viaje a Brasil',g:'ahorro'}, inversion:{n:'Inversión',g:'ahorro'},
-  novia:{n:'Novia',g:'libre',h:'Salidas y regalos'}, comida:{n:'Comida fuera',g:'libre'}, ropa:{n:'Ropa y gustos',g:'libre'},
+  novia:{n:'Novia',g:'libre',h:'Cafés, cenas y planes con ella'}, comida:{n:'Comida y antojos',g:'libre',h:'Comida fuera, snacks, agua'},
+  transporte:{n:'Transporte',g:'libre',h:'Bus, combi, taxi, apps'}, salidas:{n:'Salidas y eventos',g:'libre',h:'Entradas, fiestas, hotel, paseos'},
+  prestado:{n:'Préstamo que diste',g:'prestado',h:'Plata que te deben devolver'},
+  ing_extra:{n:'Ingreso extra',g:'ingreso'}, devolucion:{n:'Me devolvieron',g:'ingreso',h:'Te pagaron un préstamo'}, ropa:{n:'Ropa y gustos',g:'libre'},
   regalos:{n:'Fechas especiales',g:'libre',h:'Cumpleaños, Navidad'}, varios:{n:'Varios',g:'libre',h:'Pasajes, farmacia, imprevistos'}
 };
 const GRUPOS = [
@@ -236,7 +240,9 @@ const GRUPOS = [
   ['ahorro','Ahorro','Se va a BBVA el día de pago'],
   ['libre','Gastos libres','Llegan a BCP/Yape cada lunes']
 ];
-const QUICK = ['comida','novia','gasolina','ropa','regalos','varios'];
+const QUICK = ['comida','novia','transporte','salidas','gasolina','ropa','regalos','prestado','varios'];
+const QUICK_ING = ['ing_extra','devolucion'];
+const QUICK_PRES = QUICK.filter(k => k !== 'prestado');
 const MEDIOS = [['yape','Yape (BCP)'],['debito','Débito BCP'],['debito_ib','Débito Interbank'],['efectivo','Efectivo'],['plin','Plin'],['adelanto','Adelanto de sueldo'],['tc_bbva','Tarjeta BBVA'],['tc_bcp','Tarjeta BCP'],['credito','Crédito']];
 const MEDIOS_NUEVOS = MEDIOS.filter(x => x[0] !== 'credito');
 const isCred = k => k === 'credito' || String(k || '').startsWith('tc_');
@@ -286,11 +292,12 @@ function planFor(id, soloBase){
   for (const t of (c.traslados||[])) if (id > t.hasta && +montos[t.cat]) { montos[t.a] = (+montos[t.a]||0) + (+montos[t.cat]); montos[t.cat] = 0; }
   const ingreso = ov.ingreso ?? c.base?.ingreso ?? 0;
   const extras = ov.extras || [];
-  const totalIngreso = ingreso + extras.reduce((s,e) => s + (+e.monto||0), 0);
+  const ingMovs = soloBase ? 0 : sum(movsIn(cycleRange(id)).filter(m => m.tipo === 'ingreso' && m.cat === 'ing_extra'));
+  const totalIngreso = ingreso + extras.reduce((s,e) => s + (+e.monto||0), 0) + ingMovs;
   const byGroup = {fijo:0, moto:0, ahorro:0, libre:0};
   for (const k in montos) { const g = CATS[k]?.g; if (g) byGroup[g] += (+montos[k]||0); }
   const asignado = byGroup.fijo + byGroup.moto + byGroup.ahorro + byGroup.libre;
-  return {id, montos, ingreso, extras, totalIngreso, byGroup, asignado, colchon: totalIngreso - asignado, nota: ov.nota || '', repartir: !!ov.repartirSobrante, hasOv: ov.montos || {}};
+  return {id, montos, ingreso, extras, ingMovs, totalIngreso, byGroup, asignado, colchon: totalIngreso - asignado, nota: ov.nota || '', repartir: !!ov.repartirSobrante, hasOv: ov.montos || {}};
 }
 
 function libreStatus(p, r, t, gastos){
@@ -350,7 +357,7 @@ function barHTML(spent, budget, extra=''){
 function movRow(m){
   const c = CATS[m.cat]?.n || m.cat, med = MEDIOS.find(x => x[0] === m.medio)?.[1] || m.medio || '';
   return `<div class="mov"><div class="t"><b>${esc(c)}</b><small>${short(parseD(m.fecha))} · ${esc(med)}${m.nota ? ' · ' + esc(m.nota) : ''}</small></div>
-    <div class="a num">${money(m.monto)}</div><button class="x" data-act="del" data-id="${esc(m.id)}" aria-label="Borrar">✕</button></div>`;
+    <div class="a num">${m.tipo === 'ingreso' ? '+' : ''}${money(m.monto)}</div><button class="x" data-act="del" data-id="${esc(m.id)}" aria-label="Borrar">✕</button></div>`;
 }
 
 const lastCierre = () => state.cierres.length ? [...state.cierres].sort((a,b) => a.fecha < b.fecha ? 1 : -1)[0] : null;
@@ -409,7 +416,7 @@ function vHoy(){
   const alerts = [];
   if (pre) alerts.push(['', `Tu plan arranca el <b>${longD(r.start)}</b>, día de pago. Faltan ${daysBetween(t, r.start)} días.`]);
   if (p.colchon < -0.5) alerts.push(['bad', `Este mes el plan gasta ${money(-p.colchon)} más de lo que entra. Anota tu liquidación en <b>Plan</b> para cubrirlo.`]);
-  for (const k of [...QUICK]) {
+  for (const k of QUICK_PRES) {
     const b = +p.montos[k]||0, s = spent[k]||0;
     if (b > 0 && s > b) alerts.push(['bad', `Te pasaste en ${CATS[k].n}: ${money(s)} de ${money(b)}.`]);
     else if (b > 0 && s >= b * .8) alerts.push(['warn', `${CATS[k].n} va en ${Math.round(s/b*100)}% del mes.`]);
@@ -432,7 +439,7 @@ function vHoy(){
     <div class="row"><span class="num">Libres del mes: ${money(ls.gastado)} de ${money0(ls.budget)}</span><span>${past ? 'Mes cerrado' : `Pago en ${daysBetween(t, nextPay)} días · ${short(nextPay)}`}</span></div>
   </section>`;
 
-  const cats = [...QUICK].filter(k => (+p.montos[k]||0) > 0 || spent[k]);
+  const cats = QUICK_PRES.filter(k => (+p.montos[k]||0) > 0 || spent[k]);
   const catsHTML = cats.map(k => `<div class="cat"><b>${CATS[k].n}</b><span class="v num"><b>${money(spent[k]||0)}</b> / ${money0(p.montos[k]||0)}</span>${barHTML(spent[k]||0, +p.montos[k]||0)}</div>`).join('');
 
   const prox = pagoItems(id).filter(i => !i.done).slice(0, 3);
@@ -495,7 +502,11 @@ function vMetas(){
       <div class="bar"><i style="width:${tot ? Math.min(100, pag/tot*100) : 0}%"></i></div>
       <div class="sub">${M[k]?.nota ? esc(M[k].nota) : ''}</div></section>`;
   };
-  return `${ahorroCard('emergencia')}${ahorroCard('brasil')}${ahorroCard('inversion')}
+  const prest = sum(state.movs.filter(m => m.tipo === 'gasto' && m.cat === 'prestado')), dev = sum(state.movs.filter(m => m.tipo === 'ingreso' && m.cat === 'devolucion'));
+  const teDeben = prest > 0 ? `<section class="card"><div class="row2"><h2>Te deben</h2>${prest - dev <= 0.5 ? '<span class="pill ok">Todo devuelto</span>' : ''}</div>
+      <div class="meta-big"><b class="num">${money(Math.max(0, prest - dev))}</b><span class="num">prestaste ${money(prest)} · te devolvieron ${money(dev)}</span></div>
+      <div class="sub">Cuando te paguen, regístralo con + → Ingreso → Me devolvieron.</div></section>` : '';
+  return `${teDeben}${ahorroCard('emergencia')}${ahorroCard('brasil')}${ahorroCard('inversion')}
     ${deudaCard('mama', 'Deuda con mamá')}${deudaCard('caja', 'Caja Arequipa')}
     <section class="card"><h2>Mover dinero de una meta</h2>
       <div class="two"><label class="field"><span class="label">Meta</span><select id="mt-k">${['emergencia','brasil','inversion'].map(k => `<option value="${k}">${CATS[k].n}</option>`).join('')}</select></label>
@@ -638,6 +649,7 @@ function vPlan(){
       <div class="grp"><span class="label">Ingresos</span>
         <label class="line"><span>Sueldo neto<small>${base ? 'Base para todos los meses' : 'Lo que llega a Interbank'}</small></span><input id="pl-ingreso" data-act="ingreso" inputmode="decimal" value="${(+(base ? c.base?.ingreso : p.ingreso)||0).toFixed(2)}"></label>
         ${base ? '' : extras}
+        ${!base && p.ingMovs ? `<div class="line"><span>Ingresos extra registrados<small>Los que anotaste con + → Ingreso</small></span><b class="num">${money(p.ingMovs)}</b></div>` : ''}
         <div class="tot num"><span>Entra</span><span>${money(base ? c.base?.ingreso : p.totalIngreso)}</span></div>
       </div>
       ${lines}
@@ -804,27 +816,33 @@ for (const id of ['sheet', 'cierre']) {
 
 /* ---------- registrar gasto ---------- */
 function drawChips(){
-  $('#f-cats').innerHTML = QUICK.map(k => `<button type="button" data-c="${k}" class="${state.sel.cat === k ? 'on' : ''}">${CATS[k].n}</button>`).join('');
-  $('#f-medios').innerHTML = MEDIOS_NUEVOS.map(([k,n]) => `<button type="button" data-m="${k}" class="${isCred(k) ? 'cred ' : ''}${state.sel.medio === k ? 'on' : ''}">${n}</button>`).join('');
-  $('#f-warn').innerHTML = isCred(state.sel.medio) ? '<div class="alert bad"><span>La regla es no usar la tarjeta de crédito para gastos del día. Si igual la usaste, regístralo para que no se te escape.</span></div>' : '';
+  const ing = state.sel.tipo === 'ingreso';
+  $('#f-title').textContent = ing ? 'Registrar ingreso' : 'Registrar gasto';
+  $('#f-cats-l').textContent = ing ? '¿Qué es?' : '¿En qué?';
+  document.querySelectorAll('#f-tipo button').forEach(b => b.classList.toggle('on', b.dataset.t === (ing ? 'ingreso' : 'gasto')));
+  $('#f-cats').innerHTML = (ing ? QUICK_ING : QUICK).map(k => `<button type="button" data-c="${k}" class="${state.sel.cat === k ? 'on' : ''}">${CATS[k].n}</button>`).join('');
+  $('#f-medios').innerHTML = MEDIOS_NUEVOS.filter(([k]) => !ing || !(isCred(k) || k === 'adelanto')).map(([k,n]) => `<button type="button" data-m="${k}" class="${isCred(k) ? 'cred ' : ''}${state.sel.medio === k ? 'on' : ''}">${n}</button>`).join('');
+  $('#f-warn').innerHTML = !ing && isCred(state.sel.medio) ? '<div class="alert bad"><span>La regla es no usar la tarjeta de crédito para gastos del día. Si igual la usaste, regístralo para que no se te escape.</span></div>' : '';
 }
 function openSheet(){
   if (!state.db || !state.config) { toast('Tus datos aún no cargan.'); return; }
+  state.sel.tipo = 'gasto'; if (!QUICK.includes(state.sel.cat)) state.sel.cat = 'comida';
   $('#f-monto').value = ''; $('#f-nota').value = ''; $('#f-fecha').value = ymd(today());
   drawChips(); showSheet('sheet'); setTimeout(() => $('#f-monto').focus(), 60);
 }
 $('#fab').addEventListener('click', openSheet);
 $('#close').addEventListener('click', () => hideSheet('sheet'));
 $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') hideSheet('sheet'); });
+$('#f-tipo').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; state.sel.tipo = b.dataset.t; state.sel.cat = b.dataset.t === 'ingreso' ? 'ing_extra' : 'comida'; if (b.dataset.t === 'ingreso' && (isCred(state.sel.medio) || state.sel.medio === 'adelanto')) state.sel.medio = 'yape'; drawChips(); });
 $('#f-cats').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.sel.cat = b.dataset.c; drawChips(); } });
 $('#f-medios').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { state.sel.medio = b.dataset.m; drawChips(); } });
 $('#form').addEventListener('submit', e => {
   e.preventDefault();
   const monto = num($('#f-monto').value);
-  if (monto <= 0) { toast('Escribe cuánto gastaste.'); $('#f-monto').focus(); return; }
-  const doc = {tipo: 'gasto', cat: state.sel.cat, monto, medio: state.sel.medio, fecha: $('#f-fecha').value || ymd(today()), nota: $('#f-nota').value.trim().slice(0, 80), creado: Date.now()};
+  if (monto <= 0) { toast(state.sel.tipo === 'ingreso' ? 'Escribe cuánto recibiste.' : 'Escribe cuánto gastaste.'); $('#f-monto').focus(); return; }
+  const doc = {tipo: state.sel.tipo === 'ingreso' ? 'ingreso' : 'gasto', cat: state.sel.cat, monto, medio: state.sel.medio, fecha: $('#f-fecha').value || ymd(today()), nota: $('#f-nota').value.trim().slice(0, 80), creado: Date.now()};
   hideSheet('sheet');
-  write(() => state.db.collection('movs').add(doc), `${money(monto)} en ${CATS[doc.cat].n} guardado`);
+  write(() => state.db.collection('movs').add(doc), doc.tipo === 'ingreso' ? `+${money(monto)} de ${CATS[doc.cat].n} guardado` : `${money(monto)} en ${CATS[doc.cat].n} guardado`);
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideSheet('sheet'); hideSheet('cierre'); } });
 
@@ -915,6 +933,20 @@ const localDb = {
 
 const b64urlToBytes = s => { const b = s.replace(/-/g, '+').replace(/_/g, '/'); return Uint8Array.from(atob(b + '==='.slice((b.length + 3) % 4)), c => c.charCodeAt(0)); };
 
+// Correcciones de gastos que manda Claude (categoría o medio), aplicadas una sola vez por gasto
+function aplicarAjustes(cfg){
+  if (!cfg) return;
+  const hechos = new Set(LS.get('soles.ajustes', [])); let cambio = false;
+  for (const a of (cfg.ajustesMovs || [])) {
+    const key = [a.id, a.cat || '', a.medio || ''].join(':'); if (hechos.has(key)) continue;
+    const m = state.movs.find(x => x.id === a.id);
+    if (!m) continue;
+    if (a.cat) m.cat = a.cat; if (a.medio) m.medio = a.medio; cambio = true; hechos.add(key);
+  }
+  if (cambio) LS.set('soles.movs', state.movs);
+  LS.set('soles.ajustes', [...hechos]);
+}
+
 // Aplica un plan nuevo conservando lo que la persona anotó: liquidación/gratificación y datos ya confirmados
 function applyConfig(cfg) {
   if (!cfg || !cfg.base || !cfg.base.montos) return false;
@@ -936,6 +968,7 @@ function applyConfig(cfg) {
     }
   }
   delete cfg.borrarLocales;
+  aplicarAjustes(cfg);
   state.config = cfg;
   LS.set('soles.config', state.config);
   return true;
@@ -993,7 +1026,7 @@ function pastePlanHTML(id) {
 $('#view').addEventListener('input', e => { if (e.target.tagName === 'TEXTAREA') state.pasteBuf = e.target.value; });
 
 // Si hay una versión nueva publicada, recarga la app (el iPhone guarda la página vieja en caché)
-const APP_VERSION = '1793049350110';
+const APP_VERSION = '1793198956862';
 async function checkUpdate(){
   try {
     const r = await fetch('version.json?t=' + Date.now(), {cache: 'no-store'}); if (!r.ok) return;
@@ -1014,6 +1047,7 @@ async function checkUpdate(){
   state.config = LS.get('soles.config', null);
   state.movs = LS.get('soles.movs', []);
   state.cierres = LS.get('soles.cierres', []);
+  aplicarAjustes(state.config);
   state.loadedCfg = state.loadedMovs = true;
   if (ok && /(^|[#&])(k|plan)=/.test(location.hash)) {
     const h = location.hash;
