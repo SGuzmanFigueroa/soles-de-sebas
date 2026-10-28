@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-10-28T15:27:46.164Z",
+        "reason": "user confirmed: el prompt de rediseño pide explícitamente la tipografía Inter"
+      }
+    ]
+  }
+}
