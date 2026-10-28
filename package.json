@@ -1,0 +1,7 @@
+{
+  "name": "soles-de-sebas",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/calc.test.js"
+  }
+}
